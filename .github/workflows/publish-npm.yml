@@ -1,0 +1,96 @@
+name: publish npm
+
+on: 
+  repository_dispatch:
+  workflow_dispatch:
+    inputs:
+      token_type:
+        description: 'Token type'
+        default: 'secrets.GITHUB_TOKEN'
+        type: choice
+        options:
+          - secrets.GITHUB_TOKEN
+          - PAT
+          - GitHub App
+      name_suffix:
+        description: 'Name suffix for package'
+        type: string
+
+env:
+  NAME: ${{ github.event.repository.name }}
+  VERSION: "1.0.${{ github.run_number }}"
+
+jobs:
+  publish-npm:
+    runs-on: ubuntu-latest
+
+    permissions:
+      packages: write
+      contents: read
+
+    steps:
+      - name: Clean
+        run: rm -fr * .* || true
+
+      - uses: actions/checkout@v2
+
+      - name: Set environment vars based on workflow inputs
+        run: |
+          token_type="${{ github.event.client_payload.token_type }}"
+          if [ -z "$token_type" ]; then token_type="${{ inputs.token_type }}"; fi
+          name_suffix="${{ github.event.client_payload.name_suffix }}"
+          if [ -z "$name_suffix" ]; then name_suffix="${{ inputs.name_suffix }}"; fi
+
+          echo "token_type: $token_type"
+          echo "name_suffix: $name_suffix"
+          if [[ "$token_type" == "PAT" ]]; then
+            echo "Setting env.TOKEN = secrets.PAT"
+            echo "TOKEN=${{ secrets.PAT }}" >> $GITHUB_ENV
+          elif [[ "$token_type" == "GitHub App" ]]; then
+            echo "Setting env.TOKEN = GitHub App"
+            echo "TOKEN=$(./get-github-app-token ${{ github.repository_owner }})" >> $GITHUB_ENV
+          else
+            echo "Setting env.TOKEN = secrets.GITHUB_TOKEN"
+            echo "TOKEN=${{ secrets.GITHUB_TOKEN }}" >> $GITHUB_ENV
+          fi
+          cat config | while read line; do echo "$line" >> $GITHUB_ENV; done
+          echo "TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%S.%3N)" >> $GITHUB_ENV
+          echo "NAME_SUFFIX=$name_suffix" >> $GITHUB_ENV
+
+      - name: Output environment variables, etc.
+        run: |
+          echo "github.repository_owner: ${{ github.repository_owner }}"
+          echo "github.repository: ${{ github.repository}}"
+          echo "github.event.repository.name: ${{ github.event.repository.name}}"
+          echo "TIMESTAMP: ${{ env.TIMESTAMP}}"
+          echo "NAME: ${{ env.NAME }}"
+          echo "NAME_SUFFIX: ${{ env.NAME_SUFFIX }}"
+          echo "VERSION: ${{ env.VERSION }}"
+          echo "TOKEN: ${{ env.TOKEN }}"
+          echo "NPM_REGISTRY_URL: ${{ env.NPM_REGISTRY_URL }}"
+
+      - uses: actions/setup-node@v3
+        with:
+          scope: ${{ github.repository_owner }}
+          registry-url: ${{ env.NPM_REGISTRY_URL }}
+
+      - name: Create a package called @${{ github.repository_owner }}/${{ github.event.repository.name }}
+        run: npm init --scope ${{ github.repository_owner }} -y
+          
+      - name: Change package name to @${{ github.repository_owner }}/${{ env.NAME }}${{ env.NAME_SUFFIX }}
+        run: |
+          sed -i -E 's/"name": "(.*)"/"name": "@'"${{ github.repository_owner }}\/${{ env.NAME }}${{ env.NAME_SUFFIX }}"'"/g' package.json
+
+      - name: Add index.js to package
+        run: echo 'exports.sayHello = () => { console.log("Hello from ${{ github.repository }}! Package [${{ github.repository_owner }}/${{ env.NAME }}${{ env.NAME_SUFFIX }}] Version ${{ env.VERSION }} Created at ${{ env.TIMESTAMP }}") }' > index.js
+
+      - name: Set package version to ${{ env.VERSION }}
+        run: npm version ${{ env.VERSION }} --no-git-tag-version
+
+      - name: Build the package
+        run: npm pack
+
+      - name: Publish the package
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ env.TOKEN }}

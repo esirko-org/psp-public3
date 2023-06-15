@@ -1,0 +1,15 @@
+#NPM_REGISTRY_URL=http://npm.pkg.github.localhost:8003
+#NUGET_REGISTRY_URL=http://nuget.pkg.github.localhost:3005
+#RUBYGEMS_REGISTRY_URL=http://rubygems.pkg.github.localhost:3005
+#MAVEN_REGISTRY_URL=http://maven.pkg.github.localhost:3005
+#HTTP_PROTOCOL=http
+#GHCR_URL=github.localhost:8001
+#GITHUB_URL=http://github.localhost
+
+NPM_REGISTRY_URL=https://npm.pkg.github.com
+NUGET_REGISTRY_URL=https://nuget.pkg.github.com
+RUBYGEMS_REGISTRY_URL=https://rubygems.pkg.github.com
+MAVEN_REGISTRY_URL=https://maven.pkg.github.com
+HTTP_PROTOCOL=https
+GHCR_URL=ghcr.io
+GITHUB_URL=https://github.com

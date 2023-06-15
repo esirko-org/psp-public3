@@ -1,0 +1,96 @@
+name: publish GHCR
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+    inputs:
+      token_type:
+        description: 'Token type'
+        default: 'secrets.GITHUB_TOKEN'
+        type: choice
+        options:
+          - secrets.GITHUB_TOKEN
+          - PAT
+          - GitHub App
+      name_suffix:
+        description: 'Name suffix for package'
+        type: string
+
+env:
+  NAME: ${{ github.event.repository.name }}
+  VERSION: "1.0.${{ github.run_number }}"
+
+jobs:
+  publish-ghcr:
+    runs-on: ubuntu-latest
+
+    permissions:
+      packages: write
+      contents: read
+
+    steps:
+      - name: Clean
+        run: rm -fr * .* || true
+
+      - uses: actions/checkout@v3.3.0
+
+      - name: Set environment vars based on workflow inputs
+        run: |
+          token_type="${{ github.event.client_payload.token_type }}"
+          if [ -z "$token_type" ]; then token_type="${{ inputs.token_type }}"; fi
+          name_suffix="${{ github.event.client_payload.name_suffix }}"
+          if [ -z "$name_suffix" ]; then name_suffix="${{ inputs.name_suffix }}"; fi
+
+          echo "token_type: $token_type"
+          echo "name_suffix: $name_suffix"
+          if [[ "$token_type" == "PAT" ]]; then
+            echo "Setting env.TOKEN = secrets.PAT"
+            echo "TOKEN=${{ secrets.PAT }}" >> $GITHUB_ENV
+          elif [[ "$token_type" == "GitHub App" ]]; then
+            echo "Setting env.TOKEN = GitHub App"
+            echo "TOKEN=$(./get-github-app-token ${{ github.repository_owner }})" >> $GITHUB_ENV
+          else
+            echo "Setting env.TOKEN = secrets.GITHUB_TOKEN"
+            echo "TOKEN=${{ secrets.GITHUB_TOKEN }}" >> $GITHUB_ENV
+          fi
+          cat config | while read line; do echo "$line" >> $GITHUB_ENV; done
+          echo "TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%S.%3N)" >> $GITHUB_ENV
+          echo "NAME_SUFFIX=$name_suffix" >> $GITHUB_ENV
+
+      - name: Output environment variables, etc.
+        run: |
+          echo "github.repository_owner: ${{ github.repository_owner }}"
+          echo "github.repository: ${{ github.repository}}"
+          echo "github.event.repository.name: ${{ github.event.repository.name}}"
+          echo "TIMESTAMP: ${{ env.TIMESTAMP}}"
+          echo "NAME: ${{ env.NAME }}"
+          echo "NAME_SUFFIX: ${{ env.NAME_SUFFIX }}"
+          echo "VERSION: ${{ env.VERSION }}"
+          echo "TOKEN: ${{ env.TOKEN }}"
+          echo "HTTP_PROTOCOL: ${{ env.HTTP_PROTOCOL }}"
+          echo "GHCR_URL: ${{ env.GHCR_URL }}"
+          image="${{ env.GHCR_URL }}/${{ github.repository_owner }}/${{ env.NAME }}${{ env.NAME_SUFFIX }}:latest"
+          echo "IMAGE=$image" >> $GITHUB_ENV
+          echo "IMAGE: $image"
+
+      - name: Clean old docker images
+        if: env.GHCR_URL != 'ghcr.io' # Use this value to tell if we're on prod or a dev codespace
+        run: |
+          docker images | grep ${{ env.GHCR_URL }} || true
+          docker image rm -f $(docker images | grep ${{ env.GHCR_URL }} | awk '{ print $1 }') || true
+
+      - name: Create a Dockerfile
+        run: |
+          echo 'FROM alpine' > Dockerfile
+          echo 'ENTRYPOINT ["echo", "Hello from ${{ github.repository }}! Package [${{ github.repository_owner }}/${{ env.NAME }}${{ env.NAME_SUFFIX }}] Version ${{ env.VERSION }} Created at ${{ env.TIMESTAMP }}"]' >> Dockerfile
+          echo 'LABEL org.opencontainers.image.description "This image was built from commit ${{ github.sha }}"' >> Dockerfile
+          # echo 'LABEL org.opencontainers.image.source ${{ env.GITHUB_URL }}/${{ github.repository_owner }}/${{ github.event.repository.name }}' >> Dockerfile
+
+      - name: Build image
+        run: docker build . -t ${IMAGE,,} # lowercase IMAGE
+
+      - name: Login to ghcr.io
+        run: docker login ${{ env.HTTP_PROTOCOL }}://${{ env.GHCR_URL }} -u token --password-stdin <<< ${{ env.TOKEN }}
+
+      - name: Publish image
+        run: docker push ${IMAGE,,} # lowercase IMAGE
